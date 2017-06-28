@@ -10,4 +10,4 @@ cargo build --target mipsel-unknown-linux-musl
 cargo build --target armv7-unknown-linux-gnueabihf
 
 # scp our binary over to the vocore
-scp target/mipsel-unknown-linux-musl/debug/hello_world root@192.168.1.27:/mnt/sda1
+scp target/armv7-unknown-linux-gnueabihf/debug/chirppp root@192.168.1.27:/root
