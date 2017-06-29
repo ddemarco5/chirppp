@@ -1,0 +1,8 @@
+# Export the gpio we need to control the radio
+echo "1013" > /sys/class/gpio/export
+echo "1015" > /sys/class/gpio/export
+echo "1017" > /sys/class/gpio/export
+
+# Turn off the echoing of STDOUT and STDERR out of the UART (/dev/ttyS0)
+# though it also disallows logging in on that tty, but we don't care
+sudo systemctl stop serial-getty@ttyS0.service

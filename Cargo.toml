@@ -4,4 +4,5 @@ version = "0.0.0"
 authors = ["dominic"]
 
 [dependencies]
-sysfs_gpio="0.5.1"
+sysfs_gpio = "0.5.1"
+bit-vec = "0.4.4"
