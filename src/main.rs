@@ -2,15 +2,24 @@
 // BEGIN includes for radio controller functionality
 extern crate sysfs_gpio;
 use sysfs_gpio::{Direction, Edge, Pin};
-use std::fs::OpenOptions;
+//use std::fs::OpenOptions;
 use std::io::Write;
+use std::io::Read;
 use std::string::String;
 use std::thread::sleep;
 use std::time::Duration;
-use std::process::Command;
+//use std::process::Command;
 
 extern crate bit_vec;
 use bit_vec::BitVec;
+
+extern crate serial;
+use serial::prelude;
+use serial::posix;
+use serial::SerialDevice;
+use serial::SerialPortSettings;
+//use serial::SerialPort;
+//use serial::SerialDevice;
 
 // END includes for radio controller functionality
 //extern crate serialport;
@@ -162,8 +171,8 @@ struct Driver {
 	m1: Pin,
 	aux: Pin,
 	mode: RadioMode,
-	tty_device: String,
-	tty_baud: String
+	tty_device_string: String,
+	tty_device: serial::SystemPort
 }
 
 // Driver functions
@@ -171,7 +180,7 @@ struct Driver {
 impl Driver {
 
 	// Driver should be instantiated with the 3 main pins to control the radio. M0, M1, and AUX.
-	pub fn new(m0_pin_num: u64, m1_pin_num: u64, aux_pin_num: u64) -> Driver {
+	pub fn new(m0_pin_num: u64, m1_pin_num: u64, aux_pin_num: u64, tty_str: &str) -> Driver {
 		let m0_pin = Pin::new(m0_pin_num);
 		let m1_pin = Pin::new(m1_pin_num);
 		let aux_pin = Pin::new(aux_pin_num);
@@ -194,13 +203,16 @@ impl Driver {
 			Err(e) => println!("{}, correct gpio pin?",e)
 		}
 
+		let mut port = serial::open(tty_str).unwrap();
+		//port.configure(tty_settings).unwrap();
+		port.set_timeout(Duration::from_secs(1)).unwrap();
 
 		Driver{m0: Pin::new(m0_pin_num), 
 			   m1: Pin::new(m1_pin_num), 
 			   aux: Pin::new(aux_pin_num),
 			   mode: RadioMode::Sleep,
-			   tty_device: String::new(),
-			   tty_baud: String::new()
+			   tty_device_string: String::from(tty_str),
+			   tty_device: port
 			}
 	}
 
@@ -254,84 +266,111 @@ impl Driver {
 		&self.mode
 	}
 
+	/*
 	pub fn set_tty_device(&mut self, filepath: String) {
-		self.tty_device = filepath;
+		self.tty_device_string = filepath;
+	}
+	*/
+
+	
+	fn set_tty_baud(&mut self, new_baud: serial::BaudRate) {
+		let mut tty_settings = self.tty_device.read_settings().unwrap();
+		tty_settings.set_baud_rate(new_baud).unwrap();
+		// Set the new baud rate.
+		self.tty_device.write_settings(&tty_settings).unwrap();
 	}
 
-	pub fn scrape_tty_baud(&mut self) {
-		let output = Command::new("stty")
-		                     .arg("-F")
-		                     .arg(self.tty_device.clone())
-		                     .arg("-a")
-		                     .output()
-		                     .expect("failed to run stty");
-		let output_string = String::from_utf8(output.stdout).unwrap();
-		// Delimit the output string from spaces and get the iterator at 2, our speed
-		let output_string_itr = output_string.split_whitespace().nth(1).unwrap();
-		self.tty_baud = String::from(output_string_itr);
+	fn get_tty_baud(&self) -> serial::BaudRate {
+		let tty_settings = self.tty_device.read_settings().unwrap();
+		tty_settings.baud_rate().unwrap()
 	}
-
-	fn set_tty_baud(&self, new_baud: &str) {
-		Command::new("stty")
-		        .arg("-F")
-		        .arg(self.tty_device.clone())
-		        .arg(new_baud)
-		        .output()
-		        .expect("failed to run stty");
-		println!("tty baud set to {}", new_baud);
-	}
+	
 
 	pub fn write_config(&mut self, config: RadioConfig) {
+
+		// Declare our read buffer
+		let mut read_buf: Vec<u8> = (0..6).collect();
+
 		// Save the previous mode
 		let prev_mode = self.mode.clone();
 		self.set_mode(RadioMode::Sleep);
+
 		// Wait at least 2 ms as per the datasheet
 		sleep(Duration::from_millis(2));
-		// TODO: We need to set the linux tty mode to 9200 baud,
+
+		// We need to set the linux tty mode to 9200 baud, first saving the old
+		//let mut tty_settings = self.tty_device.read_settings().unwrap();
+		let orig_baud = self.get_tty_baud();
+		//tty_settings.set_baud_rate(serial::Baud9600).unwrap();
+		// Set the new baud rate.
+		self.set_tty_baud(serial::Baud9600);
+
+
 		// that is the speed that the device operates at in sleep mode
-		self.serial_write_config(config);
-		// TODO: Read serial here, radio will return it's config data...
+		self.serial_write(config.raw().as_ref());
 		// verify what it returns before continuing
+		let bytes_read = self.serial_read(&mut read_buf);
+		println!("Config: read {} bytes in response", bytes_read);
 		// Return to the mode we were in previously
 		self.set_mode(prev_mode);
-		println!("Config written");
+
+		// If the configs aren't the same, something went wrong and we need to quit
+		if read_buf != config.raw() {
+			panic!("Config wasn't written successfully! {:?} vs {:?}",bytes_read,config.raw());
+		}
+		println!("Config written successfully");
+
+		//Return the device baud rate to the original
+		self.set_tty_baud(orig_baud);
 	}
 
-	// This function will write data out of the serial port to the console for now, but soon to the radio
-	// NOTE: we only need a reference to the RadioConfig because this function won't consume it.
-	fn serial_write_config(&self, config: RadioConfig) {
-		// generate our raw config to write out of the serial port
-		//let config_raw = config.raw();
-		self.serial_write(config.raw().as_ref());
-		
+	pub fn serial_write(&mut self, data: &[u8]) {
+
+		let bytes_wrote = self.tty_device.write(data).unwrap();
+		println!("Wrote {} bytes", bytes_wrote);
+
 	}
 
-	pub fn serial_write(&self, data: &[u8]) {
-		// We have to open a clone of the filename so as not to pass ownership to it.
-		//let mut file = OpenOptions::new().read(true).write(true).open(self.tty_device.clone()).unwrap();
-		//file.write_all(data);
+	// TODO: look into buffered reader
+	pub fn serial_read(&mut self, buf: &mut Vec<u8>) -> usize {
 
-		/*
-		let s = SerialPortSettings {
-			baud_rate: BaudRate::Baud9600,
-			data_bits: DataBits::Eight,
-    		flow_control: FlowControl::None,
-    		parity: Parity::None,
-    		stop_bits: StopBits::One,
-    		timeout: Duration::from_millis(1),
-		};
-		serialport::open_with_settings("/dev/ttyS0", &s);
-		*/
+		let bytes_read = self.tty_device.read(buf).unwrap();
+		bytes_read
+
 	}
+
+	pub fn set_tty_params(&mut self, br: serial::BaudRate, 
+									 cs: serial::CharSize,
+									 p: serial::Parity,
+									 sb: serial::StopBits,
+									 fc: serial::FlowControl ) {
+									 
+		let mut settings = self.tty_device.read_settings().unwrap();
+		settings.set_baud_rate(br).unwrap();
+		settings.set_char_size(cs);
+		settings.set_parity(p);
+		settings.set_stop_bits(sb);
+		settings.set_flow_control(fc);
+
+		self.tty_device.write_settings(&settings).unwrap();
+	}
+	
 }
 
 
 fn main() {
 
 	// we want it to be a mutable driver because we will be changing fields as we go.
-	let mut e23_driver = Driver::new(1013,1015,1017);
-	e23_driver.set_tty_device(String::from("/dev/ttyS0"));
-	e23_driver.scrape_tty_baud();
+	let mut e23_driver = Driver::new(1013,1015,1017, "/dev/ttyS0");
+	e23_driver.set_tty_params(
+		serial::Baud9600,
+		serial::Bits8,
+		serial::ParityNone,
+		serial::Stop1,
+		serial::FlowNone
+		);
+	//e23_driver.set_tty_device(String::from("/dev/ttyS0"));
+	//e23_driver.scrape_tty_baud();
 	//let (m0_pin, m1_pin, aux_pin) = e23_driver.get_control_gpio_pins();
 	//println!("M0: {} M1: {} AUX: {}", m0_pin, m1_pin, aux_pin);
 
@@ -339,11 +378,19 @@ fn main() {
 	//println!("Mode set to general");
 
 	let mut testconfig = RadioConfig::new();
-	testconfig.set_transmit_power("0dBm");
+	//testconfig.set_transmit_power("20dBm");
+	testconfig.set_serial_rate("115200");
+	//set our serial rate to 115200 as well
+	e23_driver.set_tty_baud(serial::Baud115200);
 	//e23_driver.set_tty_baud("9600");
-	//e23_driver.write_config(testconfig); // Write after change
-	e23_driver.set_mode(RadioMode::Sleep);
-	e23_driver.serial_write(&[193,193,193])
+	e23_driver.write_config(testconfig); // Write after change
+	
+	//Check to see if the changes were made correctly
+	//e23_driver.set_mode(RadioMode::Sleep);
+	//e23_driver.serial_write(&[193,193,193]);
+	//sleep(Duration::from_millis(2));
+	//e23_driver.serial_read();
+
 	//e23_driver.set_tty_baud("115200");
 
 
