@@ -11,9 +11,10 @@ use std::process::Command;
 
 extern crate bit_vec;
 use bit_vec::BitVec;
+
 // END includes for radio controller functionality
-extern crate serialport;
-use serialport::prelude::*;
+//extern crate serialport;
+//use serialport::prelude::*;
 
 
 // Let's begin our definitions of the objects we'll use to control the LORA radios
@@ -310,6 +311,7 @@ impl Driver {
 		//let mut file = OpenOptions::new().read(true).write(true).open(self.tty_device.clone()).unwrap();
 		//file.write_all(data);
 
+		/*
 		let s = SerialPortSettings {
 			baud_rate: BaudRate::Baud9600,
 			data_bits: DataBits::Eight,
@@ -319,6 +321,7 @@ impl Driver {
     		timeout: Duration::from_millis(1),
 		};
 		serialport::open_with_settings("/dev/ttyS0", &s);
+		*/
 	}
 }
 

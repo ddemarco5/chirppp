@@ -6,4 +6,9 @@ authors = ["dominic"]
 [dependencies]
 sysfs_gpio = "0.5.1"
 bit-vec = "0.4.4"
-serialport = "1.0.1"
+serial = "0.3.4"
+
+
+# This is necessary because serial's .toml doesn't have our desired arch
+[replace]
+"serial:0.3.4" = { path = '../serial-rs' }
