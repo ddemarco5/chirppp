@@ -6,3 +6,4 @@ authors = ["dominic"]
 [dependencies]
 sysfs_gpio = "0.5.1"
 bit-vec = "0.4.4"
+serialport = "1.0.1"
