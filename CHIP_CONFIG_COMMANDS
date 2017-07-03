@@ -5,4 +5,4 @@ echo "1017" > /sys/class/gpio/export
 
 # Turn off the echoing of STDOUT and STDERR out of the UART (/dev/ttyS0)
 # though it also disallows logging in on that tty, but we don't care
-sudo systemctl stop serial-getty@ttyS0.service
+systemctl stop serial-getty@ttyS0.service

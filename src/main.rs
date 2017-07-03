@@ -9,13 +9,15 @@ use std::string::String;
 use std::thread::sleep;
 use std::time::Duration;
 //use std::process::Command;
+use std::env;
+use std::io::stdout;
 
 extern crate bit_vec;
 use bit_vec::BitVec;
 
 extern crate serial;
-use serial::prelude;
-use serial::posix;
+//use serial::prelude;
+//use serial::posix;
 use serial::SerialDevice;
 use serial::SerialPortSettings;
 //use serial::SerialPort;
@@ -57,6 +59,17 @@ impl RadioConfig {
 	// This function outputs the actual binary data that needs to be sent out the UART connection.
 	pub fn raw(&self) -> [u8;6] {
 		[self.head,self.addh,self.addl,self.sped,self.chan,self.option]
+	}
+
+	pub fn set_address(&mut self, new_address: &str) {
+		//change the addh and addl off of the new string
+		let new_addrh_str = &new_address[..2]; // Take first 2 bytes
+		let new_addrl_str = &new_address[2..4];	// Take last 2 bytes
+		//Convert these base16 numbers to base10
+		let new_addrh = u8::from_str_radix(new_addrh_str, 16).unwrap();
+		let new_addrl = u8::from_str_radix(new_addrl_str, 16).unwrap();
+		self.addh = new_addrh;
+		self.addl = new_addrl;
 	}
 
 	pub fn set_serial_rate(&mut self, ser_speed: &str) {
@@ -157,6 +170,7 @@ impl RadioConfig {
 // Constants for control of our radio modules
 #[allow(dead_code)]
 #[derive(Clone)]
+#[derive(Debug)]
 enum RadioMode {
 	General,
 	Wakeup,
@@ -205,7 +219,7 @@ impl Driver {
 
 		let mut port = serial::open(tty_str).unwrap();
 		//port.configure(tty_settings).unwrap();
-		port.set_timeout(Duration::from_secs(1)).unwrap();
+		port.set_timeout(Duration::from_secs(10)).unwrap();
 
 		Driver{m0: Pin::new(m0_pin_num), 
 			   m1: Pin::new(m1_pin_num), 
@@ -217,16 +231,38 @@ impl Driver {
 	}
 
 	// We might need to define our own error for this. Right ne we just panic if we never see the interrupt we're expecting
-	fn wait_for_interrupt(&self, pin: sysfs_gpio::Pin, timeout: u32) {
+	// TODO: we need to modify this function to PROPERLY timeout and throw errors
+	fn wait_for_interrupt(&self, value: bool, timeout: u32) {
 		//let input = Pin::new(pin);
 		//input.set_direction(Direction::In)?;
 		//pin.set_edge(Edge::RisingEdge)?;
-		let mut poller = pin.get_poller().unwrap();
-		//If the pin is already high by the time we get here there will be an error
-		while pin.get_value().unwrap() != 1 {
-			match poller.poll(timeout as isize).unwrap() {
-				Some(value) => println!("Aux high: {}",value),
-				None => print!(".")
+
+		let mut stdout = stdout();
+
+		let mut poller = self.aux.get_poller().unwrap();
+
+		if value {
+			//If the pin is already high by the time we get here there will be an error
+			while self.aux.get_value().unwrap() != 1 {
+				match poller.poll(timeout as isize).unwrap() {
+					Some(value) => println!("Aux high: {}",value),
+					None => {
+						stdout.write_all(b".");
+						stdout.flush();
+					}
+				}
+			}
+		}
+		else {
+			//If the pin is already low by the time we get here there will be an error
+			while self.aux.get_value().unwrap() != 0 {
+				match poller.poll(timeout as isize).unwrap() {
+					Some(value) => println!("Aux low: {}",value),
+					None => {
+						stdout.write_all(b".");
+						stdout.flush();
+					}
+				}
 			}
 		}
 	}
@@ -241,10 +277,10 @@ impl Driver {
 		let poll_wait_time_ms = 10;
 
 		// Only set the new mode if aux is high
-		if self.aux.get_value().unwrap() == 0 {
+		//if self.aux.get_value().unwrap() == 0 {
 			// Wait for the rising edge of aux
-			self.wait_for_interrupt(self.aux,poll_wait_time_ms);
-		}
+			self.wait_for_interrupt(true,poll_wait_time_ms);
+		//}
 		
 		match mode {
 			RadioMode::General => { self.m0.set_value(0).unwrap(); self.m1.set_value(0).unwrap() },
@@ -253,24 +289,19 @@ impl Driver {
 			RadioMode::Sleep => { self.m0.set_value(1).unwrap(); self.m1.set_value(1).unwrap() },
 		}
 
-		self.wait_for_interrupt(self.aux,poll_wait_time_ms);
+		self.wait_for_interrupt(true,poll_wait_time_ms);
 		// Wait at least 2 ms as per the datasheet
 		sleep(Duration::from_millis(2));
 
 		// Then set the mode variable in the driver struct
 		self.mode = mode;
+		println!("Mode set to {:?}", self.mode);
 	}
 
 	// Get a reference to the driver's mode
 	pub fn get_mode(&self) -> &RadioMode {
 		&self.mode
 	}
-
-	/*
-	pub fn set_tty_device(&mut self, filepath: String) {
-		self.tty_device_string = filepath;
-	}
-	*/
 
 	
 	fn set_tty_baud(&mut self, new_baud: serial::BaudRate) {
@@ -316,9 +347,9 @@ impl Driver {
 
 		// If the configs aren't the same, something went wrong and we need to quit
 		if read_buf != config.raw() {
-			panic!("Config wasn't written successfully! {:?} vs {:?}",bytes_read,config.raw());
+			panic!("Config wasn't written successfully! {:?} vs {:?}",read_buf,config.raw());
 		}
-		println!("Config written successfully");
+		println!("Config written successfully {:?}",read_buf);
 
 		//Return the device baud rate to the original
 		self.set_tty_baud(orig_baud);
@@ -354,14 +385,65 @@ impl Driver {
 
 		self.tty_device.write_settings(&settings).unwrap();
 	}
+
+	pub fn send_packet(&mut self, packet: &Vec<u8>) {
+		
+		// Make sure our packet isn't larger than is allowed by the device.
+		if packet.len() > 256 {
+			panic!("Attempted to send a packet that was too long");
+		}
+
+		// make sure the pin is high before we start sending
+		self.wait_for_interrupt(true,500); //wait for 500 ms before giving error.
+		// Send the packet!
+		self.serial_write(packet);
+		self.wait_for_interrupt(true,10); //I'm not sure how long it will take the radio to send all the data. Let's use 1 second for now
+		println!("Sent {} bytes of data!",packet.len());
+	}
+
+	pub fn receive_packet(&mut self, receive_buffer: &mut Vec<u8>) {
+		// Wait for aux to be low, that signifies that the radio is getting data
+		self.wait_for_interrupt(false,500);
+
+		// Read the data
+		// TODO: Make sure all the data is read correctly.
+		let num_bytes_read = self.serial_read(receive_buffer);
+
+		println!("Received {} bytes from radio", num_bytes_read);
+		println!("{:?}",receive_buffer);
+
+		// Make sure aux is high again, aka, no more data
+		self.wait_for_interrupt(true,10);
+
+	}
 	
 }
 
 
 fn main() {
 
+
+
+	// Get args that were passed
+	let args: Vec<String> = env::args().collect();
+	let platform = &args[1];
+	let send_recv = &args[2];
+
+	let mut e23_driver;
+
+	match &platform[..] {
+		"vocore" => { 
+						e23_driver = Driver::new(23,24,26, "/dev/ttyS0");
+					}
+		"chip" => { 
+						e23_driver = Driver::new(1013,1015,1017, "/dev/ttyS0");
+				  }
+		_ => panic!("Please enter either 'vocore' or 'chip'")
+	}
 	// we want it to be a mutable driver because we will be changing fields as we go.
-	let mut e23_driver = Driver::new(1013,1015,1017, "/dev/ttyS0");
+	//let mut e23_driver = Driver::new(1013,1015,1017, "/dev/ttyS0"); //Pins for C.H.I.P.
+	//let mut e23_driver = Driver::new(23,24,26, "/dev/ttyS0"); //Pins for Vocore.
+	// Bring up our serial device with defaults
 	e23_driver.set_tty_params(
 		serial::Baud9600,
 		serial::Bits8,
@@ -369,29 +451,47 @@ fn main() {
 		serial::Stop1,
 		serial::FlowNone
 		);
-	//e23_driver.set_tty_device(String::from("/dev/ttyS0"));
-	//e23_driver.scrape_tty_baud();
+
+	let mut testconfig = RadioConfig::new();
+	testconfig.set_transmit_power("20dBm");
+	testconfig.set_air_rate("1k");
+	testconfig.set_serial_rate("57600");
+	testconfig.set_address("FFFF"); // Channel 0
+	e23_driver.set_mode(RadioMode::General);
+	e23_driver.write_config(testconfig); // Write after change
+
+
+	//set our serial rate to 57600 as well
+	e23_driver.set_tty_baud(serial::Baud57600);
+
 	//let (m0_pin, m1_pin, aux_pin) = e23_driver.get_control_gpio_pins();
 	//println!("M0: {} M1: {} AUX: {}", m0_pin, m1_pin, aux_pin);
 
-	//e23_driver.set_mode(RadioMode::General);
-	//println!("Mode set to general");
 
-	let mut testconfig = RadioConfig::new();
-	//testconfig.set_transmit_power("20dBm");
-	testconfig.set_serial_rate("115200");
-	//set our serial rate to 115200 as well
-	e23_driver.set_tty_baud(serial::Baud115200);
-	//e23_driver.set_tty_baud("9600");
-	e23_driver.write_config(testconfig); // Write after change
-	
-	//Check to see if the changes were made correctly
-	//e23_driver.set_mode(RadioMode::Sleep);
-	//e23_driver.serial_write(&[193,193,193]);
-	//sleep(Duration::from_millis(2));
-	//e23_driver.serial_read();
+	match &send_recv[..] {
+		"r" => {
+			// Recieve mode
+			let mut buffer: Vec<u8> = vec![0;256]; //initialize buffer of zeros
+			println!("Waiting to receive from the radio");
+			e23_driver.receive_packet(&mut buffer);
+		}
+		"s" => {
+			// Send mode
+			//let send_buf: Vec<u8> = vec![0;256];
+			let send_string = String::from("Hello world!");
+			let send_buf = send_string.into_bytes();
+			e23_driver.send_packet(&send_buf);
+		}
+		_ => {
+			panic!("Call with either 'r' or 's'");	
+		}
+	}
 
-	//e23_driver.set_tty_baud("115200");
-
+	/*
+	//Send some data
+	let mut packet: Vec<u8> = vec![0; 10]; // create a vector of 256 bytes
+	e23_driver.send_packet(&packet);
+	e23_driver.receive_packet(&mut packet);
+	*/
 
 }

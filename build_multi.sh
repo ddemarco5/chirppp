@@ -10,4 +10,9 @@ cargo build --target mipsel-unknown-linux-musl
 cargo build --target armv7-unknown-linux-gnueabihf
 
 # scp our binary over to the vocore
-scp target/armv7-unknown-linux-gnueabihf/debug/chirppp root@192.168.1.10:/root
+echo "Vocore"
+scp target/mipsel-unknown-linux-musl/debug/chirppp root@192.168.1.2:/mnt/sda1
+
+# scp out binary over to the C.H.I.P.
+echo "C.H.I.P."
+scp target/armv7-unknown-linux-gnueabihf/debug/chirppp root@192.168.1.4:/root
