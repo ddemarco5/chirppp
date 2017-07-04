@@ -1,0 +1,40 @@
+--Disable terminal on ttyS0
+
+First method (NO need re-build the Kernel):
+
+1. Edit sysctl.conf file on your device:
+
+    /etc/sysctl.conf
+
+Add the new line at the begining of this file:
+
+kernel.printk = 0 4 1 7
+
+2. Edit inittab file on your device:
+
+    /etc/inittab
+
+up to revision r28294
+	Find line in this file:
+
+	ttyS0::askfirst:/bin/ash --login
+	ttyATH0::askfirst:/bin/ash --login
+
+	Edit the line by following example:
+
+	#ttyS0::askfirst:/bin/ash --login
+	#ttyATH0::askfirst:/bin/ash --login
+
+since revision r36992
+	Find line in this file:
+
+	::askconsole:/bin/ash --login
+
+	Edit the line by following example:
+
+	#::askconsole:/bin/ash --login
+
+3. Reboot your device.
+
+Use stty to change the tty device to raw mode
+stty -F /dev/ttyS0 -raw 
