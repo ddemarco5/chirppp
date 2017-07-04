@@ -10,7 +10,7 @@ use std::thread::sleep;
 use std::time::Duration;
 //use std::process::Command;
 use std::env;
-use std::io::stdout;
+//use std::io::stdout;
 
 extern crate bit_vec;
 use bit_vec::BitVec;
@@ -212,10 +212,12 @@ impl Driver {
 			Ok(()) => println!("AUX set correctly"),
 			Err(e) => println!("{}, correct gpio pin?",e)
 		}
+		/*
 		match aux_pin.set_edge(Edge::RisingEdge) {
 			Ok(()) => println!("AUX rising edge set correctly"),
 			Err(e) => println!("{}, correct gpio pin?",e)
 		}
+		*/
 
 		let mut port = serial::open(tty_str).unwrap();
 		//port.configure(tty_settings).unwrap();
@@ -232,35 +234,41 @@ impl Driver {
 
 	// We might need to define our own error for this. Right ne we just panic if we never see the interrupt we're expecting
 	// TODO: we need to modify this function to PROPERLY timeout and throw errors
-	fn wait_for_interrupt(&self, value: bool, timeout: u32) {
+	fn wait_for_interrupt(&mut self, value: bool, timeout: u32) {
 		//let input = Pin::new(pin);
 		//input.set_direction(Direction::In)?;
 		//pin.set_edge(Edge::RisingEdge)?;
 
-		let mut stdout = stdout();
+		//let mut stdout = stdout();
 
 		let mut poller = self.aux.get_poller().unwrap();
 
 		if value {
+			// We're waiting for a rising edge
+			self.aux.set_edge(Edge::RisingEdge).expect("Edge failed to set to rising");
 			//If the pin is already high by the time we get here there will be an error
 			while self.aux.get_value().unwrap() != 1 {
 				match poller.poll(timeout as isize).unwrap() {
 					Some(value) => println!("Aux high: {}",value),
 					None => {
-						stdout.write_all(b".");
-						stdout.flush();
+						//stdout.write_all(b".");
+						//stdout.flush();
+						print!(".");
 					}
 				}
 			}
 		}
 		else {
+			// We're detecting a 0, so we're waiting for a falling edge
+			self.aux.set_edge(Edge::FallingEdge).expect("Edge failed to set to falling");
 			//If the pin is already low by the time we get here there will be an error
 			while self.aux.get_value().unwrap() != 0 {
 				match poller.poll(timeout as isize).unwrap() {
 					Some(value) => println!("Aux low: {}",value),
 					None => {
-						stdout.write_all(b".");
-						stdout.flush();
+						//stdout.write_all(b".");
+						//stdout.flush();
+						print!(".");
 					}
 				}
 			}
@@ -401,19 +409,21 @@ impl Driver {
 		println!("Sent {} bytes of data!",packet.len());
 	}
 
-	pub fn receive_packet(&mut self, receive_buffer: &mut Vec<u8>) {
+	pub fn receive_packet(&mut self, receive_buffer: &mut Vec<u8>) -> usize {
+		// Make sure aux is high, meaning we can do something
+		self.wait_for_interrupt(true,1000);
 		// Wait for aux to be low, that signifies that the radio is getting data
 		self.wait_for_interrupt(false,500);
+		// Wait at least 5ms according to the doc
+		sleep(Duration::from_millis(5));
+		// Wait for the radio to finish sending data to the serial port for us to read.
+		self.wait_for_interrupt(true,100);
 
 		// Read the data
 		// TODO: Make sure all the data is read correctly.
 		let num_bytes_read = self.serial_read(receive_buffer);
 
-		println!("Received {} bytes from radio", num_bytes_read);
-		println!("{:?}",receive_buffer);
-
-		// Make sure aux is high again, aka, no more data
-		self.wait_for_interrupt(true,10);
+		num_bytes_read as usize
 
 	}
 	
@@ -428,6 +438,11 @@ fn main() {
 	let args: Vec<String> = env::args().collect();
 	let platform = &args[1];
 	let send_recv = &args[2];
+	let mut passed_string = String::new();
+	match args.len() {
+		4 => {passed_string.push_str(args[3].as_str());},
+		_ => {}
+	}
 
 	let mut e23_driver;
 
@@ -473,13 +488,18 @@ fn main() {
 			// Recieve mode
 			let mut buffer: Vec<u8> = vec![0;256]; //initialize buffer of zeros
 			println!("Waiting to receive from the radio");
-			e23_driver.receive_packet(&mut buffer);
+			let packet_len = e23_driver.receive_packet(&mut buffer);
+			println!("Received a packet {} bytes long", packet_len);
+			buffer.truncate(packet_len);
+			println!("{:?}",String::from_utf8(buffer).unwrap());
 		}
 		"s" => {
 			// Send mode
 			//let send_buf: Vec<u8> = vec![0;256];
-			let send_string = String::from("Hello world!");
+			let send_string = passed_string.clone();
+			//let send_string = String::from("This is a test of how long a message can get. I should be able to keep typing and the entire packet should be sent.");
 			let send_buf = send_string.into_bytes();
+			//let send_buf: Vec<u8> = vec![255;256];
 			e23_driver.send_packet(&send_buf);
 		}
 		_ => {
