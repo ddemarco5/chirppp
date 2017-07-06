@@ -3,6 +3,7 @@ name = "chirppp"
 version = "0.0.0"
 dependencies = [
  "bit-vec 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lora_driver 0.0.1 (git+https://github.com/ddemarco5/lora_driver.git)",
  "serial 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "sysfs_gpio 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -51,6 +52,16 @@ dependencies = [
 name = "libc"
 version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "lora_driver"
+version = "0.0.1"
+source = "git+https://github.com/ddemarco5/lora_driver.git#7e7e595585ddcff8301c01a225e829ab4b35bbe9"
+dependencies = [
+ "bit-vec 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serial 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sysfs_gpio 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "memchr"
@@ -180,6 +191,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum ioctl-rs 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "c733bd6be680c4365bfeb89ac48d4c39ee2c47d933da3601689131471aaf3267"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
 "checksum libc 0.2.24 (registry+https://github.com/rust-lang/crates.io-index)" = "38f5c2b18a287cf78b4097db62e20f43cace381dc76ae5c0a3073067f78b7ddc"
+"checksum lora_driver 0.0.1 (git+https://github.com/ddemarco5/lora_driver.git)" = "<none>"
 "checksum memchr 0.1.11 (registry+https://github.com/rust-lang/crates.io-index)" = "d8b629fb514376c675b98c1421e80b151d3817ac42d7c667717d282761418d20"
 "checksum nix 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7a7bb1da2be7da3cbffda73fc681d509ffd9e665af478d2bee1907cee0bc64b2"
 "checksum regex 0.1.80 (registry+https://github.com/rust-lang/crates.io-index)" = "4fd4ace6a8cf7860714a2c2280d6c1f7e6a413486c13298bbc86fd3da019402f"

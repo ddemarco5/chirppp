@@ -1,9 +1,10 @@
 [package]
 name = "chirppp"
 version = "0.0.0"
-authors = ["dominic"]
+authors = ["Dominic <awesome3165@gmail.com>"]
 
 [dependencies]
+lora_driver = { git = 'https://github.com/ddemarco5/lora_driver.git' }
 sysfs_gpio = "0.5.1"
 bit-vec = "0.4.4"
 serial = "0.3.4"
