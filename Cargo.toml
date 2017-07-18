@@ -4,10 +4,15 @@ version = "0.0.0"
 authors = ["Dominic <awesome3165@gmail.com>"]
 
 [dependencies]
-lora_driver = { git = 'https://github.com/ddemarco5/lora_driver.git' }
+#lora_driver = { git = 'https://github.com/ddemarco5/lora_driver.git' }
+# we're still making changes so use a local copy for now
+lora_driver = { path = '../lora_driver'}
 sysfs_gpio = "0.5.1"
 bit-vec = "0.4.4"
+floating-duration = "0.1.1"
 serial = "0.3.4"
+# Testing for Bryant
+#serialport = "1.0.1"
 
 
 # This is necessary because serial's .toml doesn't have our desired arch
