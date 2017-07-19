@@ -15,4 +15,4 @@ scp target/mipsel-unknown-linux-musl/debug/chirppp root@192.168.1.15:/mnt/sda1
 
 # scp out binary over to the C.H.I.P.
 echo "C.H.I.P."
-scp target/armv7-unknown-linux-gnueabihf/debug/chirppp root@192.168.1.11:/root
+scp target/armv7-unknown-linux-gnueabihf/debug/chirppp root@192.168.1.10:/root
