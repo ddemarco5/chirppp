@@ -6,6 +6,7 @@ dependencies = [
  "floating-duration 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.24 (registry+https://github.com/rust-lang/crates.io-index)",
  "lora_driver 0.0.1",
+ "nix 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serial 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "sysfs_gpio 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

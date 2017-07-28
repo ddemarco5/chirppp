@@ -12,6 +12,7 @@ bit-vec = "0.4.4"
 floating-duration = "0.1.1"
 serial = "0.3.4"
 libc = "0.2.24" # To comply with other deps
+nix = "*"
 # Testing for Bryant
 #serialport = "1.0.1"
 
