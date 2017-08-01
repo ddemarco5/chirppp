@@ -27,14 +27,23 @@ use lora_driver::RadioConfig;
 use lora_driver::Driver;
 use lora_driver::RadioMode;
 
-extern crate libc;
-use libc::termios;
+//extern crate libc;
+//use libc::termios;
 //use libc::winsize;
 
 extern crate nix;
 use nix::sys::select::select;
 use nix::sys::select::FdSet;
-use nix::sys::time::TimeVal;
+use nix::sys::time::TimeValLike;
+
+// all shit for pty
+use nix::pty::openpty;
+use nix::libc::tcgetattr;
+use nix::libc::tcsetattr;
+use nix::libc::termios;
+
+// and another bit for pty function
+use std::mem;
 
 // Testing for Bryant
 //extern crate serialport;
@@ -52,11 +61,12 @@ static XOFF: u8 = 19; // and 19 is XOFF
 
 pub fn read_timeout(file: &mut File, mut buffer: &mut Vec<u8>, duration: u32) -> Result<(), Error> {
 	let file_fd = file.as_raw_fd();
+	//println!("read_timeout FD: {:?}", file_fd);
 	//let mut blank_fd_set = FdSet::new();
 	let mut file_fd_set = FdSet::new();
 	file_fd_set.insert(file_fd);
 	let duration_i64 = duration as i64;
-	let mut timeval_millis = TimeVal::milliseconds(duration_i64);
+	let mut timeval_millis = TimeValLike::milliseconds(duration_i64);
 	match select(file_fd+1, Some(&mut file_fd_set), None, None, Some(&mut timeval_millis)) {
 		Ok(1) => {
 			// Ok to read from file
@@ -89,57 +99,35 @@ pub fn read_timeout(file: &mut File, mut buffer: &mut Vec<u8>, duration: u32) ->
 }
 
 
-// TODO: look into using the rust nix:: crate to do this
-pub fn create_pty_pair() -> Result<File, Error> {
-	// I do NOT like the config targets... but for now it may be necessary
-	#[cfg(any(target_arch = "arm", target_arch = "x86_64"))]
-	let mut test_termios = termios { 
-				c_iflag: 	libc::IGNBRK+libc::IGNPAR+libc::IXON+libc::IXOFF,
-				c_oflag: 	libc::IXON+libc::IXOFF,
-				c_cflag: 	0,
-				c_lflag: 	0,
-				c_line:		0,
-				c_cc:		[0;32],
-				c_ispeed:	115200,
-				c_ospeed:	115200
-			};
-	#[cfg(target_arch = "mips")]
-	let mut test_termios = termios { 
-			c_iflag: 	libc::IGNBRK+libc::IGNPAR+libc::IXON+libc::IXOFF,
-			c_oflag: 	libc::IXON+libc::IXOFF,
-			c_cflag: 	0,
-			c_lflag: 	0,
-			c_line:		0,
-			c_cc:		[0;32],
-			__c_ispeed:	115200,
-			__c_ospeed:	115200
-		};
+// Get a pty pair using direct linux libc syscalls
+pub fn create_pty_pair() -> File {
 
-/*
-	let mut test_winsize = winsize {
-		ws_row:		100,
-		ws_col:		256,
-		ws_xpixel:	0,
-		ws_ypixel:	0
-	};
-*/
+	match openpty(None,None) {
+		Ok(result) => {
 
-	let mut amaster: libc::c_int = 0;
-	let mut aslave: libc::c_int = 0;
-	let mut name: libc::c_char = 0;
+			// Set our software flow control
+			let mut retcode;
+			// what I'm doing here is unsafe as shit.
+			unsafe {
+				let mut pty_attr: termios = mem::zeroed();
+				//pty_attr = mem::uninitialized();
+				retcode = tcgetattr(result.master, &mut pty_attr);
+				// Set our serial parameters. Flow control, etc.
+				pty_attr.c_iflag = nix::libc::IXOFF +
+								   nix::libc::IGNBRK;
 
-	let mut test_openpty = -1;
-	unsafe {
-		test_openpty = libc::openpty(&mut amaster, &mut aslave, &mut name, &mut test_termios, ptr::null()); //, &mut test_winsize
-	}
-	match test_openpty {
-		0 => {
+								   
+				retcode = tcsetattr(result.master, 0 ,&pty_attr);
+				//println!("retcode: {}", retcode);
+
+			}
+
+
 			let pty_master_file: File;
-			unsafe { pty_master_file = File::from_raw_fd(amaster); }
-			Ok(pty_master_file)
-		},
-		-1 => Err(Error::new(ErrorKind::Other, "Openpty failed")),
-		_ => Err(Error::new(ErrorKind::Other, "Invalid openpty return code"))
+			unsafe { pty_master_file = File::from_raw_fd(result.master); }
+			pty_master_file
+		}
+		Err(e) => panic!("Failed to open pty master file: {:?}", e)
 	}
 }
 
@@ -155,7 +143,7 @@ fn main() {
 
 	match &platform[..] {
 		"vocore" => { 
-						e32_driver = Driver::new(22,23,24, "/dev/ttyS0");
+						e32_driver = Driver::new(23,26,24, "/dev/ttyS0");
 						//set our serial rate to 57600 as well
 						e32_driver.set_tty_params(
 							serial::Baud115200,
@@ -190,7 +178,7 @@ fn main() {
 	
 	
 
-	let mut pty_master_file = create_pty_pair().unwrap();
+	let mut pty_master_file = create_pty_pair();
 	//let mut bufreader = BufReader::new(pty_master_file);
 
 	/* I don't want to do obect oriented stuff for this loop... might do it later, for now, states

@@ -11,8 +11,9 @@ sysfs_gpio = "0.5.1"
 bit-vec = "0.4.4"
 floating-duration = "0.1.1"
 serial = "0.3.4"
-libc = "0.2.24" # To comply with other deps
-nix = "*"
+#libc = "0.2.24" # To comply with other deps
+#nix = "0.9.0"
+nix = { git = 'https://github.com/nix-rust/nix.git' }
 # Testing for Bryant
 #serialport = "1.0.1"
 
