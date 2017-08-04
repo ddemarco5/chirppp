@@ -52,14 +52,16 @@ use std::mem;
 static CMD_BYTE_HEARTBEAT: u8 = 1;
 static CMD_BYTE_RETRY: u8 = 2;
 
-static PACKET_TIMEOUT: u32 = 10_000;
-static PTY_TIMEOUT: u32 = 5_000;
+static PACKET_TIMEOUT: u32 = 2_000; //won't be good for 1k
+static PTY_TIMEOUT: u32 = 1_000;
+
+static MAX_PACKET_SIZE: usize = 57;
 
 static XON: u8 = 17; // software flow control. dec 19 is XON
 static XOFF: u8 = 19; // and 19 is XOFF
 
-
-pub fn read_timeout(file: &mut File, mut buffer: &mut Vec<u8>, duration: u32) -> Result<(), Error> {
+// Fills buffer with data from file, and returns the number of bytes read
+pub fn read_timeout(file: &mut File, mut buffer: &mut Vec<u8>, duration: u32) -> Result<usize, Error> {
 	let file_fd = file.as_raw_fd();
 	//println!("read_timeout FD: {:?}", file_fd);
 	//let mut blank_fd_set = FdSet::new();
@@ -73,14 +75,11 @@ pub fn read_timeout(file: &mut File, mut buffer: &mut Vec<u8>, duration: u32) ->
 
 			// debug
 			//println!("Select succeeded with a 1");
-			// Send XON flow control, we're ready to receive serial data
-			//file.write_all(&[XON;1]).unwrap();
+			
 			// Read tup to the max number of bytes to fill the packet (probably 58)
-			file.read(&mut buffer).unwrap();
-			// We've read as much as we can fit into a packet, send transmit off
-			//file.write_all(&[XOFF;1]).unwrap();
+			let bytes_read = file.read(&mut buffer).unwrap();
 
-			Ok(())
+			Ok(bytes_read)
 		}
 		Ok(0) => {
 			// Timeout
@@ -109,15 +108,22 @@ pub fn create_pty_pair() -> File {
 			let mut retcode;
 			// what I'm doing here is unsafe as shit.
 			unsafe {
+				// Make the changes to our master terminal
 				let mut pty_attr: termios = mem::zeroed();
-				//pty_attr = mem::uninitialized();
+				
 				retcode = tcgetattr(result.master, &mut pty_attr);
 				// Set our serial parameters. Flow control, etc.
+				// Everything will be off by default to avoid weird default terminal behavior
+				// (ECHO is on by default, for example)
 				pty_attr.c_iflag = nix::libc::IXOFF +
 								   nix::libc::IGNBRK;
+				pty_attr.c_oflag = 0;
+				pty_attr.c_cflag = 0;
+				pty_attr.c_lflag = 0;
 
-								   
+				
 				retcode = tcsetattr(result.master, 0 ,&pty_attr);
+				
 				//println!("retcode: {}", retcode);
 
 			}
@@ -168,10 +174,27 @@ fn main() {
 				  }
 		_ => panic!("Please enter either 'vocore' or 'chip'")
 	}
-	
 
+
+	/* TESTING!!! LOOP TO CREATE PTY PAIR AND JUST READ FROM IT TO SEE WHAT'S GOING ON 
+	let mut pty_master_file = create_pty_pair();
+	loop {
+		let mut pty_read_buf = vec![0;57];
+		// Send XON flow control, we're ready to receive serial data
+		//pty_master_file.write_all(&[XON]).unwrap();
+		match read_timeout(&mut pty_master_file, &mut pty_read_buf, 5000) {
+			Ok(x) => {println!("{:?}", pty_read_buf);}
+			Err(x) => {println!("read nothing, iterating");}
+		}
+		// We've read as much as we can fit into a packet, send transmit off
+		//pty_master_file.write_all(&[XOFF]).unwrap();
+		sleep(Duration::from_secs(1));
+		pty_master_file.write_all(&[69]).unwrap();
+	}
+	*/
+	///*
 	testconfig.set_transmit_power("20dBm");
-	testconfig.set_air_rate("1k");
+	testconfig.set_air_rate("10k");
 	testconfig.set_address("FFFF"); // Channel 0
 	e32_driver.set_mode(RadioMode::General);
 	e32_driver.write_config(testconfig);
@@ -197,8 +220,8 @@ fn main() {
 		_ => panic!("Invalid option specified, must be 'r' or 's'")
 	}
 
-	let mut previous_packet: Vec<u8> = vec![0;57];
-	let mut received_packet: Vec<u8> = vec![0;57];
+	let mut previous_packet: Vec<u8> = vec![0;MAX_PACKET_SIZE];
+	let mut received_packet: Vec<u8> = vec![0;MAX_PACKET_SIZE];
 	// Start our operation loop
 	loop {
 
@@ -241,7 +264,9 @@ fn main() {
 						}
 						else {
 							// Some weird malformed shit, we should never see this
-							panic!("Corrupt command byte: {:?}", bytes_read);
+							println!("Corrupt command byte: {:?}, trying again", bytes_read);
+							state = 1;
+							continue;
 						}
 					},
 					Err(e) => {
@@ -259,24 +284,31 @@ fn main() {
 			}
 			// flush received data to output
 			2 => {
-				println!("flush received data to output (2)");
+				println!("flush received data to output (2): {:?}", received_packet);
 				if received_packet.len() == 0 { panic!("Attempted to output blank packet, this should never happen"); }
 				// send our output without the command byte
 				pty_master_file.write_all(&received_packet).expect("Failed to output data to pty");
 				state = 3;
 			}
 			// read from serial and send packet
+			// TODO: truncate the packets in the case that we don't get 57 bytes of data
 			3 => {
 				println!("read from serial and send packet (3)");
-				let mut packet_to_send: Vec<u8> = vec![0;57];
+				let mut packet_to_send: Vec<u8> = vec![0;MAX_PACKET_SIZE];
+				// Send XON flow control, we're ready to receive serial data
+				pty_master_file.write_all(&[XON]).unwrap();
 				// reads up to 57 bytes from serial
 				match read_timeout(&mut pty_master_file, &mut packet_to_send, PTY_TIMEOUT) {
-					Ok(()) => {
+					Ok(bytes_read) => {
 						// We read some bytes
+						// Truncate the packet if it's smaller than 57
+						if bytes_read < MAX_PACKET_SIZE {
+							packet_to_send.truncate(bytes_read);
+						}
 						// set the previous packet here
 						previous_packet = packet_to_send.clone();
 						// make sure our command byte is in front
-						println!("Sending data packet");
+						println!("Sending data packet: {:?}", packet_to_send);
 						let mut send_packet_w_cmd = vec![0];
 						// push our data after the command byte
 						send_packet_w_cmd.append(&mut packet_to_send);
@@ -289,6 +321,8 @@ fn main() {
 						state = 5;
 					}
 				}
+			// We've read as much as we can fit into a packet, send transmit off
+			pty_master_file.write_all(&[XOFF]).unwrap();
 			}
 			// send previous packet again
 			4 => {
@@ -320,5 +354,5 @@ fn main() {
 		}; // we don't want to return from the match to keep the loop going
 
 	}
-
+	//*/
 }
